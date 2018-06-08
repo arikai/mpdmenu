@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 
-from subprocess import run, PIPE, DEVNULL
-from mpd import *
+from subprocess import Popen, PIPE, DEVNULL
+from mpd import MPDClient
+from mpd.base import CommandError, ConnectionError
 from sys import argv, stdout, stderr
 from getopt import gnu_getopt, GetoptError
 import re
@@ -23,8 +24,7 @@ usage: mpdmenu [options] [dmenu_cmd]
 
         -t TIMEOUT, --timeout
             Timeout of connection. Must be a number (defaults to 60)
-'''
-, file=stderr)
+''', file=stderr)
 
 dmenu_cmd = 'dmenu'
 
@@ -43,17 +43,19 @@ def sformat_track(index, track):
         return '{} {}'.format(index, track['file'])
 
 def dmenu(input, prompt='', custominput=False):
-    p = run(
+    p = Popen(
             dmenu_cmd + ' -p "{}"'.format(prompt), 
             shell=True, 
-            input='\n'.join(input), 
+            stdin=PIPE,
             universal_newlines=True, 
             stdout=PIPE
         )
+    p.stdin.write('\n'.join(input))
+    p.stdin.close()
+    p.wait()
     if p.returncode != 0:
         return None
-    output = p.stdout.strip('\n')
-    items = re.split('\n+', output)
+    items = [ s[:-1] for s in p.stdout.readlines()]
     if not custominput:
         for item in items:
             if item not in input:
@@ -97,7 +99,7 @@ def mpd_toggle(client, command):
         client.play()
         #client.pause(0)
     
-def mpd_current(client, command):
+def mpd_current_song(client, command):
     current = client.currentsong()
     dmenu_select_tracks([current], prompt='Current:', usepos=True)
 
@@ -132,6 +134,30 @@ def build_query(client, query):
 
     return query
 
+# If tracks are None, current playlist is saved
+def save_playlist(client, prompt='Playlist name:', tracks=None):
+    r = dmenu([], prompt=prompt, custominput=True)
+    while True:
+        # Saved if not zero-length name typed, not otherwise
+        if esc_pressed(r) or r[0]=='':
+            break
+        name = r[0]
+        try:
+            client.save(name)
+        except CommandError:
+            dmenu([], prompt='Playlist exists', custominput=True)
+            continue
+        break
+
+def load_tracks(client, tracks, append=False):
+    playlist = client.playlist()
+    if not append:
+        if len(playlist) > 1:
+            save_playlist(client, prompt='Save playlist?')
+        client.clear()
+    for track in tracks:
+        client.add(track['file'])
+
 LOOP_END = 0
 LOOP_CONT = 1
 
@@ -145,24 +171,26 @@ def search_list(client, query):
     dmenu(tracks, prompt='Selected:')
     return LOOP_CONT
 
-def search_select(client, query):
+def search_select_and_add(client, query):
     s = client.search(*query)
     tracks = dmenu_select_tracks(s, 'Selected:')
     if esc_pressed(tracks):
         return LOOP_CONT
-    for track in tracks:
-        client.add(track['file'])
+    load_tracks(client, tracks, append=True)
+    mpd_resume(client, 'resume')
     return LOOP_END
 
 def search_play(client, query):
-    client.clear()
-    return search_add(client, query)
+    tracks = client.search(*query)
+    load_tracks(client, tracks)
+    mpd_resume(client, 'resume')
+    return LOOP_END
 
 search_actions = { 
     'add tags'       : build_query,
     'add'            : search_add,
     'list'           : search_list,
-    'select and add' : search_select,
+    'select and add' : search_select_and_add,
     'play'           : search_play
 }
 
@@ -176,7 +204,7 @@ def mpd_search(client, command):
             return None
         action = r[0].lower()
         lc = search_actions[action](client,query)
-        if lc == LOOP_END:
+        if lc != LOOP_CONT:
             break
 
 def mpd_play(client, command):
@@ -190,21 +218,25 @@ def mpd_play(client, command):
         return
     client.play(tracks[0]['pos'])
 
-playlist_actions = ['play', 'delete', 'crop']
+current_playlist_actions = ['play', 'delete', 'crop']
 def mpd_playlist(client, command):
     current = client.currentsong()
     playlist = client.playlistinfo()
-    playlist.remove(current)
-    playlist.insert(0, current)
+    if current in playlist:
+        playlist.remove(current)
+        playlist.insert(0, current)
     tracks = dmenu_select_tracks(playlist, prompt='Playlist:', usepos=True)
 
     if tracks == None:
         return
-    r = dmenu(playlist_actions, prompt='Action:')
-    if esc_pressed(r) or none_selected(r):
-        return
-    action = r[0].lower()
-    if action not in playlist_actions:
+    while True:
+        r = dmenu(current_playlist_actions, prompt='Action:')
+        if esc_pressed(r):
+            return
+        if not none_selected(r):
+            break
+    action = r[0]
+    if action not in current_playlist_actions:
         return
     if action == 'play':
         client.play(tracks[0]['pos'])
@@ -213,14 +245,13 @@ def mpd_playlist(client, command):
         adj = 0
         for i in indices:
             client.delete(i-adj)
-            adj+=1
+            adj += 1
     elif action == 'crop':
         adj = 0
         for track in playlist:
             if track not in tracks:
                 client.delete(int(track['pos'])-adj)
-                adj = adj + 1
-    print(tracks)
+                adj += 1
     return
 
 def mpd_playopt(client, command):
@@ -254,25 +285,95 @@ def mpd_playopt(client, command):
             client.setvol(min(100,prevvol+val))
         else:
             client.setvol(max(0,min(100,val)))
+
+playlist_list_actions = ['add', 'play', 'delete', 'crop']
+def mpd_playlists_list(client, playlists):
+    tracks = []
+    for playlist in playlists:
+        tracks += client.listplaylistinfo(playlist)
+    while True:
+        r = dmenu_select_tracks(tracks, 'Select Tracks:')
+        if none_selected(r):
+            continue
+        if esc_pressed(r):
+            return
+        selected = r
+        r = dmenu(playlist_list_actions, prompt='Actions:')
+        if esc_pressed(r) or none_selected(r):
+            continue
+
+        action = r[0]
+        if action == 'add':
+            for track in selected:
+                client.add(track['file'])
+            return LOOP_END
+        elif action == 'play':
+            load_tracks(client, tracks)
+            mpd_resume(client, 'resume')
+            return LOOP_END
+        elif action == 'delete':
+            for track in selected:
+                tracks.remove(track)
+            continue
+        elif action == 'crop':
+            for track in tracks:
+                if track not in selected:
+                    tracks.remove(track)
+
+playlist_actions = ['add', 'play', 'remove', 'list']
+def mpd_playlists(client, command):
+    playlists = client.listplaylists()
+    playlists_list = [p['playlist'] for p in playlists]
+    r = dmenu(playlists_list, "Playlists:")
+    if esc_pressed(r) or none_selected(r):
+        return
+    playlists = r
+    while 1:
+        r = dmenu(playlist_actions)
+        if esc_pressed(r):
+            break
+        if none_selected(r):
+            continue
+        action = r[0]
+        if action == 'add':
+            for playlist in playlists:
+                client.load(playlist)
+        elif action == 'play':
+            mpd_clear(client, command)
+            for playlist in playlists:
+                client.load(playlist)
+            mpd_resume(client, 'resume')
+        elif action == 'remove':
+            for playlist in playlists:
+                client.rm(playlist)
+        elif action == 'list':
+            rc = mpd_playlists_list(client, playlists)
+            if rc == LOOP_CONT:
+                continue
+        break
+
+def mpd_save_playlist(client, command):
+    save_playlist(client)
             
 commands = {
-    'resume'    : mpd_resume,
-    'pause'     : mpd_pause,
-    'stop'      : mpd_stop,
-    'toggle'    : mpd_toggle,
-    'current'   : mpd_current,
-    'previous'  : mpd_previous,
-    'next'      : mpd_next,
-    'clear'     : mpd_clear,
-    'search'    : mpd_search,
-    'play'      : mpd_play,
-    'playlist'  : mpd_playlist,
-    'repeat'    : mpd_playopt,
-    'random'    : mpd_playopt,
-    'single'    : mpd_playopt,
-    'consume'   : mpd_playopt,
-    'volume'    : mpd_playopt,
-    # 'options'   : mpd_options
+    'resume'       : mpd_resume,
+    'pause'        : mpd_pause,
+    'stop'         : mpd_stop,
+    'toggle'       : mpd_toggle,
+    'current song' : mpd_current_song,
+    'previous'     : mpd_previous,
+    'next'         : mpd_next,
+    'clear'        : mpd_clear,
+    'search'       : mpd_search,
+    'play'         : mpd_play,
+    'playlist'     : mpd_playlist,
+    'repeat'       : mpd_playopt,
+    'random'       : mpd_playopt,
+    'single'       : mpd_playopt,
+    'consume'      : mpd_playopt,
+    'volume'       : mpd_playopt,
+    'save playlist': mpd_save_playlist,
+    'all playlists': mpd_playlists,
 }
 
 def main(address='localhost', port=6600, timeout=60):
@@ -281,15 +382,20 @@ def main(address='localhost', port=6600, timeout=60):
     client.connect(address, port)
 
     while True:
-        r = dmenu(commands.keys(), prompt='Action: ')
-        if esc_pressed(r):
-            return 
-        if none_selected(r):
-            continue
-        command = r[0]
-        if command not in commands:
-            break
-        commands[command](client, command.lower())
+        try:
+                r = dmenu(commands.keys(), prompt='Action: ')
+                if esc_pressed(r):
+                    return 
+                if none_selected(r):
+                    continue
+                command = r[0]
+                if command not in commands:
+                    break
+                commands[command](client, command.lower())
+        except ConnectionError as e:
+            r = dmenu(['retry', 'close'], prompt="Connection error")
+            if esc_pressed(r) or none_selected(r) or r[0] == 'close':
+                break
 
     client.close()
     client.disconnect()
@@ -322,8 +428,9 @@ if __name__=='__main__':
     if len(args) != 0:
         dmenu_cmd = ' '.join(args)
     else:
-        rc = run('which dmenu', shell=True, stdout=DEVNULL).returncode 
-        if rc != 0:
-            print('"which dmenu" returned {}'.format(rc), file=stderr)
+        p = Popen(['which', 'dmenu'])
+        p.wait()
+        if p.returncode != 0:
+            print('"which dmenu" returned {}'.format(p.returncode), file=stderr)
             exit(1);
     main(address=address, port=port, timeout=timeout) 

@@ -19,3 +19,8 @@ mpdmenu [options] [dmenu_cmd]
         -t TIMEOUT, --timeout
             Timeout of connection. Must be a number (defaults to 60)
 ```
+# Dependencies
+
+- python3
+- dmenu (or any other menu with dmenu functionality)
+- [python-mpd2](https://github.com/Mic92/python-mpd2)
