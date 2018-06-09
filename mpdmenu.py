@@ -35,19 +35,21 @@ def none_selected(r):
     return len(r) == 0
 
 def sformat_track(index, track):
+    a = ['{} '.format(index)]
     if 'artist' in track:
-        return '{} {} - {}'.format(index, track['artist'], track['title'])
-    elif 'title' in track:
-        return '{} {}'.format(index, track['title'])
+        a.append('{} - '.format(track['artist']))
+    if 'title' in track:
+        a.append(track['title'])
     else:
-        return '{} {}'.format(index, track['file'])
+        a.append(track['file'])
+    return ''.join(a)
 
 def dmenu(input, prompt='', custominput=False):
     p = Popen(
-            dmenu_cmd + ' -p "{}"'.format(prompt), 
-            shell=True, 
+            dmenu_cmd + ' -p "{}"'.format(prompt),
+            shell=True,
             stdin=PIPE,
-            universal_newlines=True, 
+            universal_newlines=True,
             stdout=PIPE
         )
     p.stdin.write('\n'.join(input))
@@ -98,7 +100,7 @@ def mpd_toggle(client, command):
     else:
         client.play()
         #client.pause(0)
-    
+
 def mpd_current_song(client, command):
     current = client.currentsong()
     dmenu_select_tracks([current], prompt='Current:', usepos=True)
@@ -113,8 +115,9 @@ def mpd_clear(client, command):
     client.clear()
 
 
-def build_query(client, query):
-    tags = client.tagtypes()
+def build_query(client, query, command):
+    tags = ['Any']
+    tags += client.tagtypes()
     while True:
         r = dmenu(tags, prompt='Type:')
         if esc_pressed(r):
@@ -122,17 +125,52 @@ def build_query(client, query):
         if none_selected(r):
             continue
         qtype = r[0].lower()
-        r = dmenu(
-                client.list(qtype, *query), 
-                prompt=qtype.capitalize()+':'
-            )
+        if qtype == 'any':
+            r = dmenu([], prompt='Any tag', custominput=True)
+        else:
+            r = dmenu(
+                    client.list(qtype, *query),
+                    prompt=qtype.capitalize()+':'
+                )
         if esc_pressed(r) or none_selected(r):
             continue
-        item = r[0]
+        if len(r) > 1:
+            item = r
+        else:
+            item = r[0]
         query.append(qtype)
         query.append(item)
 
     return query
+
+def execute_query(client, query, function):
+    queries = []
+    pairs = [query[i:i+2] for i in range(0,len(query),2)]
+    qtype, value = pairs[0]
+    pairs = pairs[1:]
+    if type(value) is list:
+        for v in value:
+            queries.append([qtype,v])
+    else:
+        queries.append([qtype,value])
+    for qtype, value in pairs:
+        if type(value) is list:
+            new_queries = []
+            for query in queries:
+                new_queries += [query + [qtype, v] for v in value]
+            queries = new_queries
+        else:
+            for query in queries:
+                query.append(qtype)
+                query.append(value)
+
+    results = []
+    for query in queries:
+        result = function(*query)
+        if result != None:
+            results += result
+    return results;
+
 
 # If tracks are None, current playlist is saved
 def save_playlist(client, prompt='Playlist name:', tracks=None):
@@ -152,7 +190,7 @@ def save_playlist(client, prompt='Playlist name:', tracks=None):
 def load_tracks(client, tracks, append=False):
     playlist = client.playlist()
     if not append:
-        if len(playlist) > 1:
+        if len(playlist) > 0:
             save_playlist(client, prompt='Save playlist?')
         client.clear()
     for track in tracks:
@@ -161,18 +199,27 @@ def load_tracks(client, tracks, append=False):
 LOOP_END = 0
 LOOP_CONT = 1
 
-def search_add(client, query):
-    client.searchadd(*query)
+def search_add(client, query, command):
+    if command == 'find':
+        execute_query(client, query, client.findadd)
+    else:
+        execute_query(client, query, client.searchadd)
     return LOOP_END
 
-def search_list(client, query):
-    s = client.search(*query)
-    tracks = ['{} {} - {}'.format(i, s[i]['artist'], s[i]['title']) for i in range(0,len(s))]
+def search_list(client, query, command):
+    if command == 'find':
+        s = execute_query(client, query, client.find)
+    else:
+        s = execute_query(client, query, client.search)
+    tracks = [sformat_track(i, s[i]) for i in range(0,len(s))]
     dmenu(tracks, prompt='Selected:')
     return LOOP_CONT
 
-def search_select_and_add(client, query):
-    s = client.search(*query)
+def search_select_and_add(client, query, command):
+    if command == 'find':
+        s = execute_query(client, query, client.find)
+    else:
+        s = execute_query(client, query, client.search)
     tracks = dmenu_select_tracks(s, 'Selected:')
     if esc_pressed(tracks):
         return LOOP_CONT
@@ -180,13 +227,16 @@ def search_select_and_add(client, query):
     mpd_resume(client, 'resume')
     return LOOP_END
 
-def search_play(client, query):
-    tracks = client.search(*query)
-    load_tracks(client, tracks)
+def search_play(client, query, command):
+    playlist = client.playlist()
+    if len(playlist) > 0:
+        save_playlist(client, prompt='Save playlist?')
+    client.clear()
+    search_add(client, query, command)
     mpd_resume(client, 'resume')
     return LOOP_END
 
-search_actions = { 
+search_actions = {
     'add tags'       : build_query,
     'add'            : search_add,
     'list'           : search_list,
@@ -195,7 +245,7 @@ search_actions = {
 }
 
 def mpd_search(client, command):
-    query = build_query(client, [])
+    query = build_query(client, [], command)
     if query == None or len(query) == 0:
         return None
     while True:
@@ -203,9 +253,12 @@ def mpd_search(client, command):
         if esc_pressed(r) or none_selected(r):
             return None
         action = r[0].lower()
-        lc = search_actions[action](client,query)
-        if lc != LOOP_CONT:
-            break
+        if action == 'add tags':
+            query = build_query(client,query,command)
+        else:
+            lc = search_actions[action](client, query, command)
+            if lc != LOOP_CONT:
+                break
 
 def mpd_play(client, command):
     current = client.currentsong()
@@ -354,7 +407,7 @@ def mpd_playlists(client, command):
 
 def mpd_save_playlist(client, command):
     save_playlist(client)
-            
+
 commands = {
     'resume'       : mpd_resume,
     'pause'        : mpd_pause,
@@ -365,6 +418,7 @@ commands = {
     'next'         : mpd_next,
     'clear'        : mpd_clear,
     'search'       : mpd_search,
+    'find'         : mpd_search,
     'play'         : mpd_play,
     'playlist'     : mpd_playlist,
     'repeat'       : mpd_playopt,
@@ -385,7 +439,7 @@ def main(address='localhost', port=6600, timeout=60):
         try:
                 r = dmenu(commands.keys(), prompt='Action: ')
                 if esc_pressed(r):
-                    return 
+                    return
                 if none_selected(r):
                     continue
                 command = r[0]
@@ -433,4 +487,4 @@ if __name__=='__main__':
         if p.returncode != 0:
             print('"which dmenu" returned {}'.format(p.returncode), file=stderr)
             exit(1);
-    main(address=address, port=port, timeout=timeout) 
+    main(address=address, port=port, timeout=timeout)
