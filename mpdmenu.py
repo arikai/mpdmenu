@@ -307,38 +307,6 @@ def mpd_playlist(client, command):
                 adj += 1
     return
 
-def mpd_playopt(client, command):
-    status = client.status()[command]
-    if command in ['repeat', 'random', 'single', 'consume']:
-        sel = ['On', 'Off']
-        if status == '1':
-            sel.reverse()
-        r = dmenu(sel, prompt=command.capitalize())
-        if esc_pressed(r) or none_selected(r):
-            return
-        val = int(r[0].strip() == 'On')
-        if command == 'repeat':
-            client.repeat(val)
-        elif command == 'random':
-            client.random(val)
-        elif command == 'single':
-            client.single(val)
-        else:
-            client.consume(val)
-    if command == 'volume':
-        r = dmenu([status], prompt="Volume: ", custominput=True)
-        if esc_pressed(r) or none_selected(r):
-            return
-        s = r[0].strip()
-        val = int(s.strip('+- %\n\t'))
-        prevvol = int(status)
-        if s[0]=='-':
-            client.setvol(max(0,prevvol-val))
-        elif s[0]=='+':
-            client.setvol(min(100,prevvol+val))
-        else:
-            client.setvol(max(0,min(100,val)))
-
 playlist_list_actions = ['add', 'play', 'delete', 'crop']
 def mpd_playlists_list(client, playlists):
     tracks = []
@@ -408,6 +376,53 @@ def mpd_playlists(client, command):
 def mpd_save_playlist(client, command):
     save_playlist(client)
 
+def set_volume(client, prev_volume):
+    r = dmenu([prev_volume], prompt="Volume: ", custominput=True)
+    if esc_pressed(r) or none_selected(r):
+        return
+    s = r[0].strip()
+    val = int(s.strip('+- %\n\t'))
+    prev_volume = int(prev_volume)
+    if s[0]=='-':
+        client.setvol(max(0,prev_volume-val))
+    elif s[0]=='+':
+        client.setvol(min(100,prev_volume+val))
+    else:
+        client.setvol(max(0,min(100,val)))
+
+# play_options = ['random', 'repeat', 'single', 'consume', 'volume', 'state']
+play_options = [('random', 'b'), ('repeat', 'b'), ('single', 'b'), ('consume', 'b'), ('volume', 'n')]
+def mpd_options(client, command):
+    status = client.status()
+    opt_list = []
+    for opt,t in play_options:
+        value = status[opt]
+        if t=='b':
+            print_value = str((value == '1'))
+        elif t=='n':
+            if value == '-1':
+                continue
+            print_value = '{}%'.format(value)
+        opt_list.append('{} : {}'.format(opt,print_value))
+    selected = dmenu(opt_list, prompt='Options:')
+    selected = [i.split(' : ') for i in selected]
+    for opt, value in selected:
+        if opt in ['repeat', 'random', 'single', 'consume']:
+            val = 1^int(status[opt])
+        if opt == 'repeat':
+            client.repeat(val)
+        elif opt == 'random':
+            client.random(val)
+        elif opt == 'single':
+            client.single(val)
+        elif opt == 'consume':
+            client.consume(val)
+        elif opt == 'volume':
+            set_volume(client, status['volume'])
+
+
+
+
 commands = {
     'resume'       : mpd_resume,
     'pause'        : mpd_pause,
@@ -421,13 +436,9 @@ commands = {
     'find'         : mpd_search,
     'play'         : mpd_play,
     'playlist'     : mpd_playlist,
-    'repeat'       : mpd_playopt,
-    'random'       : mpd_playopt,
-    'single'       : mpd_playopt,
-    'consume'      : mpd_playopt,
-    'volume'       : mpd_playopt,
     'save playlist': mpd_save_playlist,
     'all playlists': mpd_playlists,
+    'options'      : mpd_options
 }
 
 def main(address='localhost', port=6600, timeout=60):
