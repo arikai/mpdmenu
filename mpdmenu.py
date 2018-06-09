@@ -191,8 +191,8 @@ def execute_query(client, query, function):
 
 # If tracks are None, current playlist is saved
 def save_playlist(client, prompt='Playlist name:', tracks=None):
-    r = dmenu([], prompt=prompt, custominput=True)
     while True:
+        r = dmenu([], prompt=prompt, custominput=True)
         # Saved if not zero-length name typed, not otherwise
         if esc_pressed(r) or r[0]=='':
             break
@@ -200,8 +200,14 @@ def save_playlist(client, prompt='Playlist name:', tracks=None):
         try:
             client.save(name)
         except CommandError:
-            dmenu([], prompt='Playlist exists', custominput=True)
-            continue
+            r = dmenu(['Yes', 'No'], prompt='Playlist exists. Overwrite?', custominput=True)
+            print(r)
+            if esc_pressed(r) or none_selected(r) or r[0] == 'No':
+                continue
+            else:
+                client.rm(name)
+                client.save(name)
+
         break
 
 def load_tracks(client, tracks, append=False):
@@ -358,7 +364,24 @@ def mpd_playlists_list(client, playlists):
                 if track not in selected:
                     tracks.remove(track)
 
-playlist_actions = ['add', 'play', 'remove', 'list']
+def mpd_playlists_rename(client, playlists):
+    for playlist in playlists:
+        prompt='Rename:'
+        while True:
+            r = dmenu([playlist], prompt=prompt, custominput=True)
+            if esc_pressed(r):
+                break
+            newname = r[0]
+            if newname == '':
+                continue
+            try:
+                client.rename(playlist, newname)
+            except CommandError:
+                prompt='{} exists. Rename:'.format(newname) 
+                continue
+            break
+
+playlist_actions = ['add', 'play', 'remove', 'list', 'rename']
 def mpd_playlists(client, command):
     playlists = client.listplaylists()
     playlists_list = [p['playlist'] for p in playlists]
@@ -367,7 +390,11 @@ def mpd_playlists(client, command):
         return
     playlists = r
     while 1:
-        r = dmenu(playlist_actions)
+        if len(playlists) > 1:
+            prompt = 'Playlists: {} ...'.format(playlists[0])
+        else:
+            prompt = 'Playlist: {}'.format(playlists[0])
+        r = dmenu(playlist_actions, prompt=prompt)
         if esc_pressed(r):
             break
         if none_selected(r):
@@ -388,6 +415,8 @@ def mpd_playlists(client, command):
             rc = mpd_playlists_list(client, playlists)
             if rc == LOOP_CONT:
                 continue
+        elif action == 'rename':
+            rc = mpd_playlists_rename(client, playlists)
         break
 
 def mpd_save_playlist(client, command):
@@ -407,7 +436,6 @@ def set_volume(client, prev_volume):
     else:
         client.setvol(max(0,min(100,val)))
 
-# play_options = ['random', 'repeat', 'single', 'consume', 'volume', 'state']
 play_options = [('random', 'b'), ('repeat', 'b'), ('single', 'b'), ('consume', 'b'), ('volume', 'n')]
 def mpd_options(client, command):
     status = client.status()
@@ -437,7 +465,18 @@ def mpd_options(client, command):
         elif opt == 'volume':
             set_volume(client, status['volume'])
 
-
+def mpd_shuffle(client, command):
+    playlist = client.playlistinfo()
+    tracks = dmenu_select_tracks(playlist, prompt='Select range:', usepos=True)
+    if esc_pressed(tracks):
+        return
+    if none_selected(tracks) or len(tracks) < 2:
+        client.shuffle()
+    else:
+        positions = [int(track['pos']) for track in tracks]
+        a = min(positions)
+        b = max(positions)+1
+        client.shuffle('{}:{}'.format(a,b))
 
 
 commands = {
@@ -455,7 +494,8 @@ commands = {
     'playlist'     : mpd_playlist,
     'save playlist': mpd_save_playlist,
     'all playlists': mpd_playlists,
-    'options'      : mpd_options
+    'options'      : mpd_options,
+    'shuffle'      : mpd_shuffle
 }
 
 def main(address='localhost', port=6600, timeout=60):
