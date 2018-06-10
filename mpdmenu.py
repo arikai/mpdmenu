@@ -283,14 +283,21 @@ def search_list(client, query, command):
     dmenu(tracks, prompt='Selected:')
     return LOOP_CONT
 
-def search_select_and_add(client, query, command):
+def search_select(client, query, command):
     if command == 'find':
         s = execute_query(client, query, client.find)
     else:
         s = execute_query(client, query, client.search)
-    tracks = dmenu_select_tracks(s, 'Selected:')
+    tracks = dmenu_select_tracks(s, 'Select:')
     if esc_pressed(tracks):
         return LOOP_CONT
+    r = dmenu(['play', 'add'], prompt='Action:')
+    if esc_pressed(r) or none_selected(r):
+        return LOOP_CONT
+    if r == 'play':
+        playlist = client.playlist()
+        save_playlist(client, prompt='Save playlist?')
+
     load_tracks(client, tracks, append=True)
     mpd_resume(client, 'resume')
     return LOOP_END
@@ -308,7 +315,7 @@ search_actions = {
     'filter'         : build_query,
     'add'            : search_add,
     'list'           : search_list,
-    'select and add' : search_select_and_add,
+    'select'         : search_select,
     'play'           : search_play
 }
 
@@ -561,6 +568,40 @@ def mpd_shuffle(client, command):
         b = max(positions)+1
         client.shuffle('{}:{}'.format(a,b))
 
+def mpd_seek(client, command):
+    nc = 0
+    while True:
+        current, length = client.status()['time'].split(':')
+        c = int(current)
+        l = int(length)
+        r = dmenu([current, length], prompt='Time:', custominput=True)
+        if esc_pressed(r) or none_selected(r):
+            return
+        ntime = r[0].strip()
+        try:
+            ptime = float(ntime.rstrip('%').lstrip('+-'))
+        except ValueError:
+            continue
+        if ntime.endswith('%'):
+            ntime = ntime.rstrip('%')
+            frac = l*ptime/100
+            if ntime.startswith('+'):
+                nc = c + frac
+            elif ntime.startswith('-'):
+                nc = c - frac
+            else:
+                nc = frac
+        else:
+            if ntime.startswith('+'):
+                nc = c + ptime
+            elif ntime.startswith('-'):
+                nc = c - ptime
+            else:
+                nc = ptime
+        nc = max(0,min(int(length), nc))
+        break
+    client.seekcur(nc)
+
 
 commands = {
     'resume'           : mpd_resume,
@@ -577,7 +618,8 @@ commands = {
     'save playlist'    : mpd_save_playlist,
     'all playlists'    : mpd_playlists,
     'options'          : mpd_options,
-    'shuffle'          : mpd_shuffle
+    'shuffle'          : mpd_shuffle,
+    'seek'             : mpd_seek
 }
 
 def main(address='localhost', port=6600, timeout=60):
@@ -639,3 +681,4 @@ if __name__=='__main__':
             print('"which dmenu" returned {}'.format(p.returncode), file=stderr)
             exit(1);
     main(address=address, port=port, timeout=timeout)
+
