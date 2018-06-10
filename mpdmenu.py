@@ -49,7 +49,7 @@ def esc_pressed(r):
     return r == None
 
 def none_selected(r):
-    return len(r) == 0
+    return type(r) is list and len(r) == 0
 
 def sformat_track(index, track):
     a = ['{} '.format(index)]
@@ -81,21 +81,71 @@ def dmenu(input, prompt='', custominput=False):
                 items.remove(item)
     return items
 
-def dmenu_select_tracks(tracks, prompt='""', usepos=False):
+def dmenu_select_tracks(tracks, prompt='""', usepos=False, ranges=True):
     t = tracks
     if usepos:
         tracks_fmt = [sformat_track(t[i]['pos'], t[i]) for i in range(0,len(t))]
     else:
         tracks_fmt = [sformat_track(i, t[i]) for i in range(0,len(t))]
-    r =  dmenu(tracks_fmt, prompt=prompt)
-    if esc_pressed(r) or none_selected(r):
-        return None
-    selected_tracks = r
-    indices = [int(st.split(' ', 1)[0]) for st in selected_tracks]
-    if usepos:
-        selected_tracks = list(filter(lambda t: int(t['pos']) in indices, tracks))
+
+    stype = 'set'
+    while True:
+        r = dmenu(tracks_fmt, prompt=prompt)
+        if esc_pressed(r) or none_selected(r):
+            return None
+        selected_tracks = r
+        indices = [int(st.split(' ', 1)[0]) for st in selected_tracks]
+        if not ranges or len(indices)==1:
+            break
+        r = dmenu(['set', 'ranges'], prompt='Selection:')
+        if esc_pressed(r):
+            continue
+        if none_selected(r):
+            stype = 'set'
+        else:
+            stype = r[0]
+        break
+
+    # Ranges are inclusive on both ends
+    if stype == 'ranges':
+        selected_tracks = []
+        ranges = []
+        if len(indices) % 2 == 1:
+            indices.append(indices[-1])
+        pairs = [indices[i:i+2] for i in range(0,len(indices),2)]
+        for a,b in pairs:
+            if a > b:
+                t=a; a=b; b=t;
+            found = False
+            for i in range(0,len(ranges)):
+                ra, rb = ranges[i]
+                if ra < a < rb:
+                    ranges[i][1] = b
+                elif ra < b < rb:
+                    ranges[i][0] = a
+                elif a < ra and rb < b:
+                    ranges[i][0] = a
+                    ranges[i][1] = b
+                elif rb < a:
+                    ranges.insert(i+1,[a,b])
+                else:
+                    continue
+                found = True
+                break
+            if not found:
+                ranges.append([a,b])
+        if usepos:
+            track_at_pos = dict((int(t['pos']), t) for t in tracks)
+        else:
+            track_at_pos = dict((i, tracks[i]) for i in range(0, len(t)))
+        for a,b in ranges:
+            selected_tracks.extend([track_at_pos[i] for i in range(a,b+1)])
     else:
-        selected_tracks = [tracks[i] for i in indices]
+        selected_tracks=[]
+        if usepos:
+            selected_tracks = list(filter(lambda t: int(t['pos']) in indices, tracks))
+        else:
+            selected_tracks = [tracks[i] for i in indices]
     return selected_tracks
 
 
@@ -117,10 +167,6 @@ def mpd_toggle(client, command):
     else:
         client.play()
         #client.pause(0)
-
-def mpd_current_song(client, command):
-    current = client.currentsong()
-    dmenu_select_tracks([current], prompt='Current:', usepos=True)
 
 def mpd_previous(client, command):
     client.previous()
@@ -201,7 +247,6 @@ def save_playlist(client, prompt='Playlist name:', tracks=None):
             client.save(name)
         except CommandError:
             r = dmenu(['Yes', 'No'], prompt='Playlist exists. Overwrite?', custominput=True)
-            print(r)
             if esc_pressed(r) or none_selected(r) or r[0] == 'No':
                 continue
             else:
@@ -260,7 +305,7 @@ def search_play(client, query, command):
     return LOOP_END
 
 search_actions = {
-    'add tags'       : build_query,
+    'filter'         : build_query,
     'add'            : search_add,
     'list'           : search_list,
     'select and add' : search_select_and_add,
@@ -294,8 +339,42 @@ def mpd_play(client, command):
         return
     client.play(tracks[0]['pos'])
 
-current_playlist_actions = ['play', 'delete', 'crop']
-def mpd_playlist(client, command):
+# Wrapper function: uniform signature
+def mpd_playlist_move_track(client, src, dst, name=''):
+    if name:
+        client.playlistmove(name, src, dst)
+    else:
+        client.move(src, dst)
+
+def mpd_playlist_move_tracks(client, playlist, tracks, before=True, playlist_name=''):
+    indices = sorted([int(t['pos']) for t in tracks])
+    base_prompt = 'Move before:'
+    prompt = base_prompt
+    while True:
+        r = dmenu_select_tracks(playlist, prompt=prompt, usepos=True, ranges=False)
+        if esc_pressed(r) or none_selected(r):
+            return
+        to = int(r[0]['pos'])
+        if to in indices:
+            prompt='{} is to be moved. {}'.format(to, base_prompt)
+            continue
+        break
+    adj = 0
+    i = 0
+    if before:
+        to = max(0,to-1)
+    while i < len(indices) and indices[i] <= to: # placed before pivot point
+        mpd_playlist_move_track(client, indices[i]-adj, to)
+        adj += 1
+        i += 1
+    to  = min(len(playlist)-1, to+1)
+    while i < len(indices): # placed after pivot point
+        mpd_playlist_move_track(client, indices[i], to)
+        i += 1
+        to += 1
+
+current_playlist_actions = ['play', 'delete', 'crop', 'move before', 'move after']
+def mpd_current_playlist(client, command):
     current = client.currentsong()
     playlist = client.playlistinfo()
     if current in playlist:
@@ -328,6 +407,9 @@ def mpd_playlist(client, command):
             if track not in tracks:
                 client.delete(int(track['pos'])-adj)
                 adj += 1
+    elif action in ['move before', 'move after']:
+        before = (action == 'move before')
+        mpd_playlist_move_tracks(client, playlist, tracks, before=before)
     return
 
 playlist_list_actions = ['add', 'play', 'delete', 'crop']
@@ -337,10 +419,10 @@ def mpd_playlists_list(client, playlists):
         tracks += client.listplaylistinfo(playlist)
     while True:
         r = dmenu_select_tracks(tracks, 'Select Tracks:')
-        if none_selected(r):
-            continue
         if esc_pressed(r):
             return
+        if none_selected(r):
+            continue
         selected = r
         r = dmenu(playlist_list_actions, prompt='Actions:')
         if esc_pressed(r) or none_selected(r):
@@ -467,7 +549,8 @@ def mpd_options(client, command):
 
 def mpd_shuffle(client, command):
     playlist = client.playlistinfo()
-    tracks = dmenu_select_tracks(playlist, prompt='Select range:', usepos=True)
+    tracks = dmenu_select_tracks(playlist, prompt='Select range:',
+            usepos=True, ranges=False)
     if esc_pressed(tracks):
         return
     if none_selected(tracks) or len(tracks) < 2:
@@ -480,22 +563,21 @@ def mpd_shuffle(client, command):
 
 
 commands = {
-    'resume'       : mpd_resume,
-    'pause'        : mpd_pause,
-    'stop'         : mpd_stop,
-    'toggle'       : mpd_toggle,
-    'current song' : mpd_current_song,
-    'previous'     : mpd_previous,
-    'next'         : mpd_next,
-    'clear'        : mpd_clear,
-    'search'       : mpd_search,
-    'find'         : mpd_search,
-    'play'         : mpd_play,
-    'playlist'     : mpd_playlist,
-    'save playlist': mpd_save_playlist,
-    'all playlists': mpd_playlists,
-    'options'      : mpd_options,
-    'shuffle'      : mpd_shuffle
+    'resume'           : mpd_resume,
+    'pause'            : mpd_pause,
+    'stop'             : mpd_stop,
+    'toggle'           : mpd_toggle,
+    'previous'         : mpd_previous,
+    'next'             : mpd_next,
+    'clear'            : mpd_clear,
+    'search'           : mpd_search,
+    'find'             : mpd_search,
+    'play'             : mpd_play,
+    'current playlist' : mpd_current_playlist,
+    'save playlist'    : mpd_save_playlist,
+    'all playlists'    : mpd_playlists,
+    'options'          : mpd_options,
+    'shuffle'          : mpd_shuffle
 }
 
 def main(address='localhost', port=6600, timeout=60):
@@ -518,6 +600,7 @@ def main(address='localhost', port=6600, timeout=60):
             r = dmenu(['retry', 'close'], prompt="Connection error")
             if esc_pressed(r) or none_selected(r) or r[0] == 'close':
                 break
+            client.connect(address, port)
 
     client.close()
     client.disconnect()
