@@ -191,10 +191,12 @@ def build_query(client, query, command):
         if qtype == 'any':
             r = dmenu([], prompt='Any tag', custominput=True)
         else:
-            r = dmenu(
-                    client.list(qtype, *query),
-                    prompt=qtype.capitalize()+':'
-                )
+            if len(query) == 0:
+                values = client.list(qtype)
+            else:
+                values = execute_query(client, query, client.list, args=[qtype])
+                values = sorted(set(values))
+            r = dmenu(values, prompt='{}:'.format(qtype.capitalize()))
         if esc_pressed(r) or none_selected(r):
             continue
         if len(r) > 1:
@@ -206,28 +208,32 @@ def build_query(client, query, command):
 
     return query
 
-def execute_query(client, query, function):
+def execute_query(client, query, function, args=None):
     queries = []
     pairs = [query[i:i+2] for i in range(0,len(query),2)]
-    qtype, value = pairs[0]
-    pairs = pairs[1:]
-    if type(value) is list:
-        for v in value:
-            queries.append([qtype,v])
-    else:
-        queries.append([qtype,value])
-    for qtype, value in pairs:
+    if len(pairs) > 0:
+        qtype, value = pairs[0]
+        pairs = pairs[1:]
         if type(value) is list:
-            new_queries = []
-            for query in queries:
-                new_queries += [query + [qtype, v] for v in value]
-            queries = new_queries
+            for v in value:
+                queries.append([qtype,v])
         else:
-            for query in queries:
-                query.append(qtype)
-                query.append(value)
+            queries.append([qtype,value])
+        for qtype, value in pairs:
+            if type(value) is list:
+                new_queries = []
+                for query in queries:
+                    new_queries += [query + [qtype, v] for v in value]
+                queries = new_queries
+            else:
+                for query in queries:
+                    query.append(qtype)
+                    query.append(value)
 
     results = []
+    if args:
+        main_function = function
+        function = lambda *query: main_function(*args, *query)
     for query in queries:
         result = function(*query)
         if result != None:
@@ -298,10 +304,10 @@ def search_select(client, query, command):
     r = dmenu(['play', 'add'], prompt='Action:')
     if esc_pressed(r) or none_selected(r):
         return LOOP_CONT
-    if r == 'play':
-        playlist = client.playlist()
+    action = r[0]
+    if action == 'play':
         prompt_save_playlist(client)
-
+        client.clear()
     load_tracks(client, tracks, append=True)
     mpd_resume(client, 'resume')
     return LOOP_END
