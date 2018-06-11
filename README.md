@@ -1,6 +1,8 @@
 # mpdmenu - mpd client powered by dmenu and python-mpd2 
 `mpdmenu` is a Python3 script that uses `dmenu` or any other dmenu-like menu for X (e.g. `rofi`) to control `mpd`.
 
+[Preview](https://i.imgur.com/BktKjXe.gif)
+
 # Usage
 
 ```
