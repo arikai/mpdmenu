@@ -242,7 +242,7 @@ def execute_query(client, query, function, args=None):
 
 def prompt_save_playlist(client):
     cur_len = int(client.status()['playlistlength'])
-    if cur_len > 1:
+    if cur_len > 0:
         save_playlist(client, prompt='Save playlist?')
 
 
@@ -337,7 +337,7 @@ def mpd_search(client, command):
         if esc_pressed(r) or none_selected(r):
             return None
         action = r[0].lower()
-        if action == 'add tags':
+        if action == 'filter':
             query = build_query(client,query,command)
         else:
             lc = search_actions[action](client, query, command)
