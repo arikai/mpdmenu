@@ -612,6 +612,9 @@ def mpd_seek(client, command):
         break
     client.seekcur(nc)
 
+def mpd_update(client, command):
+    client.update()
+ 
 
 commands = {
     'resume'           : mpd_resume,
@@ -629,7 +632,8 @@ commands = {
     'all playlists'    : mpd_playlists,
     'options'          : mpd_options,
     'shuffle'          : mpd_shuffle,
-    'seek'             : mpd_seek
+    'seek'             : mpd_seek,
+    'update'           : mpd_update,
 }
 
 def main(address='localhost', port=6600, timeout=60):
