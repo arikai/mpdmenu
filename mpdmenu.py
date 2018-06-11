@@ -234,6 +234,11 @@ def execute_query(client, query, function):
             results += result
     return results;
 
+def prompt_save_playlist(client):
+    cur_len = int(client.status()['playlistlength'])
+    if cur_len > 1:
+        save_playlist(client, prompt='Save playlist?')
+
 
 # If tracks are None, current playlist is saved
 def save_playlist(client, prompt='Playlist name:', tracks=None):
@@ -258,8 +263,7 @@ def save_playlist(client, prompt='Playlist name:', tracks=None):
 def load_tracks(client, tracks, append=False):
     playlist = client.playlist()
     if not append:
-        if len(playlist) > 0:
-            save_playlist(client, prompt='Save playlist?')
+        prompt_save_playlist(client)
         client.clear()
     for track in tracks:
         client.add(track['file'])
@@ -296,7 +300,7 @@ def search_select(client, query, command):
         return LOOP_CONT
     if r == 'play':
         playlist = client.playlist()
-        save_playlist(client, prompt='Save playlist?')
+        prompt_save_playlist(client)
 
     load_tracks(client, tracks, append=True)
     mpd_resume(client, 'resume')
@@ -304,8 +308,7 @@ def search_select(client, query, command):
 
 def search_play(client, query, command):
     playlist = client.playlist()
-    if len(playlist) > 0:
-        save_playlist(client, prompt='Save playlist?')
+    prompt_save_playlist(client)
     client.clear()
     search_add(client, query, command)
     mpd_resume(client, 'resume')
@@ -466,7 +469,7 @@ def mpd_playlists_rename(client, playlists):
             try:
                 client.rename(playlist, newname)
             except CommandError:
-                prompt='{} exists. Rename:'.format(newname) 
+                prompt='{} exists. Rename:'.format(newname)
                 continue
             break
 
@@ -493,6 +496,7 @@ def mpd_playlists(client, command):
             for playlist in playlists:
                 client.load(playlist)
         elif action == 'play':
+            prompt_save_playlist(client)
             mpd_clear(client, command)
             for playlist in playlists:
                 client.load(playlist)
