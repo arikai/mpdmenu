@@ -669,7 +669,7 @@ if __name__=='__main__':
     port = 6600
     timeout = 60
     try:
-        opts, args = gnu_getopt(argv[1:], 'a:p:t:', ['--address=', '--port=', '--timeout'])
+        opts, args = gnu_getopt(argv[1:], 'a:p:t:', ['address=', 'port=', 'timeout'])
         for opt in opts:
             key = opt[0]
             value = opt[1]
