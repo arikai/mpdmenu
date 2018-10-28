@@ -178,7 +178,21 @@ def mpd_clear(client, command):
     client.clear()
 
 
-def build_query(client, query, command):
+"""Interactively build immediate representation of query to MPD via dmenu (see execute_query)
+
+:param client: client-connection to MPD
+:type client: MPDClient
+:param command: command that caused a call to this function.
+                Used to specialize behaviour of interactive query builder.
+                Currently possible values: 'find', 'search'
+:type command: str
+:param query: previously built (using this function) query immediate representation.
+              Passed to reenter function.
+              Format: [type_str, key_str or [key_str1, key_str2, ... ], ...]
+              (default is [])
+:type query: list
+"""
+def build_query(client, command, query=[]):
     tags = ['Any']
     tags += client.tagtypes()
     while True:
@@ -196,7 +210,7 @@ def build_query(client, query, command):
             else:
                 values = execute_query(client, query, client.list, args=[qtype])
                 values = sorted(set(values))
-            r = dmenu(values, prompt='{}:'.format(qtype.capitalize()))
+            r = dmenu(values, prompt='{}:'.format(qtype.capitalize()), custominput = (command == 'search'))
         if esc_pressed(r) or none_selected(r):
             continue
         if len(r) > 1:
@@ -208,6 +222,19 @@ def build_query(client, query, command):
 
     return query
 
+"""Construct query to MPD from immediate representation
+:param client: client-connection to MPD
+:type client: MPDClient
+:param query: previously built (using this function) query immediate representation.
+              Format: [type_str, key_str or [key_str1, key_str2, ... ], ...]
+:type query: list
+:param function: client.function which will be used for this query.
+              Possible values are: client.searchadd, client.list, etc.
+              I.e. any command that works with query
+:type function: function of MPDClient that works with query
+:param args: TODO I can't remember why this param is so ugly and why array
+:type args: array
+"""
 def execute_query(client, query, function, args=None):
     queries = []
     pairs = [query[i:i+2] for i in range(0,len(query),2)]
@@ -328,8 +355,9 @@ search_actions = {
     'play'           : search_play
 }
 
+# Covers both 'find' and 'search' command: extinguised by 'command' string
 def mpd_search(client, command):
-    query = build_query(client, [], command)
+    query = build_query(client, command)
     if query == None or len(query) == 0:
         return None
     while True:
@@ -338,7 +366,7 @@ def mpd_search(client, command):
             return None
         action = r[0].lower()
         if action == 'filter':
-            query = build_query(client,query,command)
+            query = build_query(client, command, query=query)
         else:
             lc = search_actions[action](client, query, command)
             if lc != LOOP_CONT:
@@ -614,7 +642,7 @@ def mpd_seek(client, command):
 
 def mpd_update(client, command):
     client.update()
- 
+
 
 commands = {
     'resume'           : mpd_resume,
