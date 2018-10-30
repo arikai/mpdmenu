@@ -195,6 +195,12 @@ def mpd_clear(client, command):
 def build_query(client, command, query=[]):
     tags = ['Any']
     tags += client.tagtypes()
+
+# BUG: if you delete this lines, find (or search) and play something, then find 
+# again, query will be the same from the previous 'find'
+    if not query:
+        query = []
+
     while True:
         r = dmenu(tags, prompt='Type:')
         if esc_pressed(r):
