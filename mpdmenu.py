@@ -63,7 +63,7 @@ def sformat_track(index, track):
 
 def dmenu(input, prompt='', custominput=False):
     p = Popen(
-            dmenu_cmd + ' -p "{}"'.format(prompt),
+            dmenu_cmd + (' -p "{}"'.format(prompt) if prompt else ''),
             shell=True,
             stdin=PIPE,
             universal_newlines=True,
@@ -97,7 +97,7 @@ def dmenu_select_tracks(tracks, prompt='""', usepos=False, ranges=True):
         indices = [int(st.split(' ', 1)[0]) for st in selected_tracks]
         if not ranges or len(indices)==1:
             break
-        r = dmenu(['set', 'ranges'], prompt='Selection:')
+        r = dmenu(['set', 'ranges'], prompt='Selection')
         if esc_pressed(r):
             continue
         if none_selected(r):
@@ -202,7 +202,7 @@ def build_query(client, command, query=[]):
         query = []
 
     while True:
-        r = dmenu(tags, prompt='Type:')
+        r = dmenu(tags, prompt='Type')
         if esc_pressed(r):
             break
         if none_selected(r):
@@ -216,7 +216,7 @@ def build_query(client, command, query=[]):
             else:
                 values = execute_query(client, query, client.list, args=[qtype])
                 values = sorted(set(values))
-            r = dmenu(values, prompt='{}:'.format(qtype.capitalize()), custominput = (command == 'search'))
+            r = dmenu(values, prompt='{}'.format(qtype.capitalize()), custominput = (command == 'search'))
         if esc_pressed(r) or none_selected(r):
             continue
         if len(r) > 1:
@@ -280,7 +280,7 @@ def prompt_save_playlist(client):
 
 
 # If tracks are None, current playlist is saved
-def save_playlist(client, prompt='Playlist name:', tracks=None):
+def save_playlist(client, prompt='Playlist name', tracks=None):
     while True:
         r = dmenu([], prompt=prompt, custominput=True)
         # Saved if not zero-length name typed, not otherwise
@@ -323,7 +323,7 @@ def search_list(client, query, command):
     else:
         s = execute_query(client, query, client.search)
     tracks = [sformat_track(i, s[i]) for i in range(0,len(s))]
-    dmenu(tracks, prompt='Selected:')
+    dmenu(tracks, prompt='Selected')
     return LOOP_CONT
 
 def search_select(client, query, command):
@@ -334,7 +334,7 @@ def search_select(client, query, command):
     tracks = dmenu_select_tracks(s, 'Select:')
     if esc_pressed(tracks):
         return LOOP_CONT
-    r = dmenu(['play', 'add'], prompt='Action:')
+    r = dmenu(['play', 'add'], prompt='Action')
     if esc_pressed(r) or none_selected(r):
         return LOOP_CONT
     action = r[0]
@@ -367,7 +367,7 @@ def mpd_search(client, command):
     if query == None or len(query) == 0:
         return None
     while True:
-        r = dmenu(search_actions)
+        r = dmenu(search_actions, prompt='Selection')
         if esc_pressed(r) or none_selected(r):
             return None
         action = r[0].lower()
@@ -384,7 +384,7 @@ def mpd_play(client, command):
     if current:
         playlist.remove(current)
         playlist.insert(0, current)
-    tracks = dmenu_select_tracks(playlist, prompt='Play:', usepos=True)
+    tracks = dmenu_select_tracks(playlist, prompt='Play', usepos=True)
     if tracks == None:
         return
     client.play(tracks[0]['pos'])
@@ -430,12 +430,12 @@ def mpd_current_playlist(client, command):
     if current in playlist:
         playlist.remove(current)
         playlist.insert(0, current)
-    tracks = dmenu_select_tracks(playlist, prompt='Playlist:', usepos=True)
+    tracks = dmenu_select_tracks(playlist, prompt='Playlist', usepos=True)
 
     if tracks == None:
         return
     while True:
-        r = dmenu(current_playlist_actions, prompt='Action:')
+        r = dmenu(current_playlist_actions, prompt='Action')
         if esc_pressed(r):
             return
         if not none_selected(r):
@@ -474,7 +474,7 @@ def mpd_playlists_list(client, playlists):
         if none_selected(r):
             continue
         selected = r
-        r = dmenu(playlist_list_actions, prompt='Actions:')
+        r = dmenu(playlist_list_actions, prompt='Actions')
         if esc_pressed(r) or none_selected(r):
             continue
 
@@ -498,7 +498,7 @@ def mpd_playlists_list(client, playlists):
 
 def mpd_playlists_rename(client, playlists):
     for playlist in playlists:
-        prompt='Rename:'
+        prompt='Rename'
         while True:
             r = dmenu([playlist], prompt=prompt, custominput=True)
             if esc_pressed(r):
@@ -509,7 +509,7 @@ def mpd_playlists_rename(client, playlists):
             try:
                 client.rename(playlist, newname)
             except CommandError:
-                prompt='{} exists. Rename:'.format(newname)
+                prompt='{} exists. Rename'.format(newname)
                 continue
             break
 
@@ -582,7 +582,7 @@ def mpd_options(client, command):
                 continue
             print_value = '{}%'.format(value)
         opt_list.append('{} : {}'.format(opt,print_value))
-    selected = dmenu(opt_list, prompt='Options:')
+    selected = dmenu(opt_list, prompt='Options')
     selected = [i.split(' : ') for i in selected]
     for opt, value in selected:
         if opt in ['repeat', 'random', 'single', 'consume']:
@@ -600,7 +600,7 @@ def mpd_options(client, command):
 
 def mpd_shuffle(client, command):
     playlist = client.playlistinfo()
-    tracks = dmenu_select_tracks(playlist, prompt='Select range:',
+    tracks = dmenu_select_tracks(playlist, prompt='Select range',
             usepos=True, ranges=False)
     if esc_pressed(tracks):
         return
@@ -618,7 +618,7 @@ def mpd_seek(client, command):
         current, length = client.status()['time'].split(':')
         c = int(current)
         l = int(length)
-        r = dmenu([current, length], prompt='Time:', custominput=True)
+        r = dmenu([current, length], prompt='Time', custominput=True)
         if esc_pressed(r) or none_selected(r):
             return
         ntime = r[0].strip()
@@ -677,7 +677,7 @@ def main(address='localhost', port=6600, timeout=60):
 
     while True:
         try:
-                r = dmenu(commands.keys(), prompt='Action: ')
+                r = dmenu(commands.keys(), prompt='Action')
                 if esc_pressed(r):
                     return
                 if none_selected(r):
